@@ -1,0 +1,11 @@
+{
+  "name": "smart-farm-frontend",
+  "version": "1.0.0",
+  "description": "Smart Agriculture IoT Dashboard",
+  "scripts": {
+    "start": "http-server -p 8000 -c-1"
+  },
+  "dependencies": {
+    "http-server": "^14.1.1"
+  }
+}
