@@ -1,0 +1,184 @@
+#include <Arduino.h>
+#include <WiFiS3.h>
+#include <time.h>
+#include "DHT.h"
+
+// ---------- Sensor Pins ----------
+#define DHTPIN 2
+#define DHTTYPE DHT11
+#define LDRPIN A0
+#define LIGHT_THRESHOLD 260
+// ---------- LED Pins ----------
+#define LED_YELLOW 4
+#define LED_BLUE   5
+
+// ---------- Timing ----------
+#define DAY_INTERVAL_MS   5000
+#define NIGHT_INTERVAL_MS 5000
+#define HTTP_TIMEOUT_MS   6000
+
+// ---------- WiFi / Backend ----------
+const char* WIFI_SSID = "ComLab505";
+const char* WIFI_PASS = "#Ramswifi";
+
+const char* SERVER_HOST = "192.168.51.215";
+const int   SERVER_PORT = 3000;
+
+const char* SENSOR_ID = "003";
+const char* LOCATION  = "East_Garage";
+
+DHT dht(DHTPIN, DHTTYPE);
+WiFiClient client;
+
+void clearLEDs() {
+  digitalWrite(LED_YELLOW, LOW);
+  digitalWrite(LED_BLUE, LOW);
+}
+
+void connectWiFi() {
+  while (WiFi.status() != WL_CONNECTED) {
+    Serial.print("Connecting to WiFi SSID: ");
+    Serial.println(WIFI_SSID);
+    WiFi.begin(WIFI_SSID, WIFI_PASS);
+
+    unsigned long start = millis();
+    while (WiFi.status() != WL_CONNECTED && millis() - start < 12000) {
+      delay(400);
+      Serial.print(".");
+    }
+    Serial.println();
+  }
+
+  Serial.println("WiFi connected.");
+  Serial.print("Board IP: ");
+  Serial.println(WiFi.localIP());
+}
+
+String getIsoTimestamp() {
+  unsigned long epoch = WiFi.getTime();
+  if (epoch == 0) return "2026-01-01T00:00:00Z";
+
+  time_t raw = (time_t)epoch;
+  struct tm* t = gmtime(&raw);
+  if (t == nullptr) return "2026-01-01T00:00:00Z";
+
+  char buffer[25];
+  snprintf(buffer, sizeof(buffer),
+    "%04d-%02d-%02dT%02d:%02d:%02dZ",
+    t->tm_year + 1900, t->tm_mon + 1, t->tm_mday,
+    t->tm_hour, t->tm_min, t->tm_sec);
+  return String(buffer);
+}
+
+void sendToServer(float temperature, float humidity, int lightLevel) {
+  String timestamp = getIsoTimestamp();
+
+  String body = String("{") +
+    "\"sensor_id\":\"" + String(SENSOR_ID) + "\"," +
+    "\"location\":\"" + String(LOCATION) + "\"," +
+    "\"temperature\":" + String(temperature, 2) + "," +
+    "\"humidity\":" + String(humidity, 2) + "," +
+    "\"light_level\":" + String(lightLevel) + "," +
+    "\"is_daytime\":true," +
+    "\"timestamp\":\"" + timestamp + "\"" +
+    "}";
+
+  if (!client.connect(SERVER_HOST, SERVER_PORT)) {
+    Serial.println("  >> ERROR: Could not connect to server.");
+    return;
+  }
+
+  client.print(String("POST /api/sensors/data HTTP/1.1\r\n") +
+               "Host: " + String(SERVER_HOST) + ":" + String(SERVER_PORT) + "\r\n" +
+               "Content-Type: application/json\r\n" +
+               "Connection: close\r\n" +
+               "Content-Length: " + String(body.length()) + "\r\n\r\n" +
+               body);
+
+  unsigned long start = millis();
+  bool gotResponse = false;
+  while (millis() - start < HTTP_TIMEOUT_MS) {
+    while (client.available()) {
+      gotResponse = true;
+      client.readStringUntil('\n');
+      start = millis();
+    }
+    if (!client.connected()) break;
+    delay(10);
+  }
+
+  client.stop();
+
+  if (gotResponse) {
+    Serial.println("  >> Data sent successfully.");
+  } else {
+    Serial.println("  >> No response from server.");
+  }
+}
+
+void setup() {
+  Serial.begin(9600);
+  while (!Serial) {}
+
+  pinMode(LED_YELLOW, OUTPUT);
+  pinMode(LED_BLUE, OUTPUT);
+  clearLEDs();
+
+  dht.begin();
+
+  Serial.println("=========================================");
+  Serial.println("  Industrial IoT - Smart Farm Node");
+  Serial.print("  Sensor ID : "); Serial.println(SENSOR_ID);
+  Serial.print("  Location  : "); Serial.println(LOCATION);
+  Serial.println("=========================================");
+
+  connectWiFi();
+}
+
+void loop() {
+  if (WiFi.status() != WL_CONNECTED) connectWiFi();
+
+  int lightLevel    = analogRead(LDRPIN);
+  float humidity    = dht.readHumidity();
+  float temperature = dht.readTemperature();
+
+  Serial.println("-----------------------------------------");
+  Serial.print("  Light Level : ");
+  Serial.print(lightLevel);
+  Serial.println(" / 300");
+
+  if (isnan(humidity) || isnan(temperature)) {
+    Serial.println("  ERROR: Failed to read from DHT sensor!");
+    delay(3000);
+    return;
+  }
+
+  Serial.print("  Temperature : ");
+  Serial.print(temperature, 2);
+  Serial.println(" C");
+
+  Serial.print("  Humidity    : ");
+  Serial.print(humidity, 2);
+  Serial.println(" %");
+
+  bool isDaytime = (lightLevel > LIGHT_THRESHOLD);
+
+  clearLEDs();
+
+  if (isDaytime) {
+    // --- DAYTIME: transmit data ---
+    digitalWrite(LED_YELLOW, HIGH);
+    Serial.println("  Status      : DAYTIME  [Yellow LED ON]");
+    Serial.println("  >> TRANSMITTING data to farm server...");
+    sendToServer(temperature, humidity, lightLevel);
+
+  } else {
+    // --- NIGHTTIME: suppress transmission ---
+    digitalWrite(LED_BLUE, HIGH);
+    Serial.println("  Status      : NIGHTTIME [Blue LED ON]");
+    Serial.println("  >> Transmission suppressed. Standby mode.");
+  }
+
+  Serial.println("-----------------------------------------");
+  delay(isDaytime ? DAY_INTERVAL_MS : NIGHT_INTERVAL_MS);
+}
