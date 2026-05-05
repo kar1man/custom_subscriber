@@ -12,11 +12,27 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Deploy dashboard folder to GitHub Pages
-        uses: JamesIves/github-pages-deploy-action@v5
-        with:
-          branch: gh-pages
-          folder: Projects/Smart_Farm/custom_subscriber
-          clean: true
-          token: ${{ secrets.GITHUB_TOKEN }}
-          commit-message: 'Deploy Smart Farm dashboard to GitHub Pages'
+      - name: Build and deploy
+        run: |
+          # Copy dashboard files to temp directory
+          mkdir -p /tmp/dashboard
+          cp -r Projects/Smart_Farm/custom_subscriber/* /tmp/dashboard/
+          
+          # Configure git
+          git config --global user.email "github-actions@github.com"
+          git config --global user.name "GitHub Actions"
+          
+          # Checkout gh-pages branch
+          git fetch origin gh-pages 2>/dev/null || true
+          git checkout gh-pages || git checkout --orphan gh-pages
+          
+          # Remove old files and add new ones
+          rm -rf !(\.git|\.gitignore)
+          cp -r /tmp/dashboard/* .
+          
+          # Commit and push
+          git add .
+          git commit -m "Deploy Smart Farm dashboard from commit ${{ github.sha }}" || echo "No changes to commit"
+          git push origin gh-pages
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
