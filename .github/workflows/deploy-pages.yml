@@ -9,30 +9,30 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - name: Checkout main branch
+        uses: actions/checkout@v3
 
-      - name: Build and deploy
+      - name: Deploy to gh-pages
         run: |
-          # Copy dashboard files to temp directory
-          mkdir -p /tmp/dashboard
-          cp -r Projects/Smart_Farm/custom_subscriber/* /tmp/dashboard/
+          git config user.email "actions@github.com"
+          git config user.name "GitHub Actions"
           
-          # Configure git
-          git config --global user.email "github-actions@github.com"
-          git config --global user.name "GitHub Actions"
+          # Get the dashboard files
+          TEMP_DIR=$(mktemp -d)
+          cp -r Projects/Smart_Farm/custom_subscriber/* "$TEMP_DIR/"
           
-          # Checkout gh-pages branch
+          # Switch to gh-pages branch (create if doesn't exist)
           git fetch origin gh-pages 2>/dev/null || true
-          git checkout gh-pages || git checkout --orphan gh-pages
+          git checkout gh-pages 2>/dev/null || git checkout --orphan gh-pages
           
-          # Remove old files and add new ones
-          rm -rf !(\.git|\.gitignore)
-          cp -r /tmp/dashboard/* .
+          # Clear everything except .git
+          find . -not -path './.git*' -not -name '.git*' -type f -delete
+          find . -not -path './.git*' -not -name '.git*' -type d -delete
+          
+          # Copy new files
+          cp -r "$TEMP_DIR"/* .
           
           # Commit and push
           git add .
-          git commit -m "Deploy Smart Farm dashboard from commit ${{ github.sha }}" || echo "No changes to commit"
+          git commit -m "Deploy from main (${{ github.sha }})" || exit 0
           git push origin gh-pages
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
