@@ -13,6 +13,7 @@ const path = require('path');
 require('dotenv').config();
 
 const db = require('./database');
+const mqtt = require('./mqtt');
 const {
   validateSensorPayload,
   validateSensorExists,
@@ -304,6 +305,15 @@ app.post('/api/sensors/data', async (req, res) => {
     }
 
     console.log(`✓ Data received from sensor ${sensor_id} (${location}): ${temperature}°C, ${humidity}%`);
+      // Publish to MQTT for IoT Panel subscribers
+      mqtt.publishSensorData({
+        sensor_id,
+        location,
+        temperature,
+        humidity,
+        light_level,
+        timestamp
+      });
 
     res.status(200).json({
       status: 'success',
@@ -659,6 +669,17 @@ const server = app.listen(PORT, '0.0.0.0', () => {
 ║  Health Check:  http://localhost:${PORT}/api/health     ║
 ╚════════════════════════════════════════════════════════╝
   `);
+  
+  // Initialize MQTT connection
+  mqtt.initMqttConnection().then((connected) => {
+    if (connected) {
+      console.log('[MQTT] ✓ Ready to publish to IoT MQTT Panel subscribers');
+    } else {
+      console.log('[MQTT] ⚠ Operating without MQTT (IoT Panel features unavailable)');
+    }
+  }).catch((err) => {
+    console.error('[MQTT] Error during initialization:', err);
+  });
 });
 
 // Graceful shutdown
@@ -667,6 +688,7 @@ process.on('SIGTERM', async () => {
   server.close(async () => {
     console.log('[SHUTDOWN] Server closed');
     await db.closePool();
+    await mqtt.disconnect();
     process.exit(0);
   });
 });
@@ -676,6 +698,7 @@ process.on('SIGINT', async () => {
   server.close(async () => {
     console.log('[SHUTDOWN] Server closed');
     await db.closePool();
+    await mqtt.disconnect();
     process.exit(0);
   });
 });

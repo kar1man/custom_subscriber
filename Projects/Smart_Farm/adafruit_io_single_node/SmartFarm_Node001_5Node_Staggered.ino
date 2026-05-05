@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <WiFiS3.h>
+#include <math.h>
 #include "Adafruit_MQTT.h"
 #include "Adafruit_MQTT_Client.h"
 
@@ -11,16 +12,16 @@
 // =========================
 // Timing
 // =========================
-#define READ_INTERVAL_MS 5000UL
+#define NODE_INTERVAL_MS 5000UL
+#define STAGGER_MS 1000UL
 #define MQTT_RETRY_MS 5000UL
 #define WIFI_CONNECT_TIMEOUT_MS 15000UL
-#define TEMP_ALERT_THRESHOLD_C 30.0f
 
 // =========================
 // WiFi credentials
 // =========================
-const char* WIFI_SSID = "PLDTHOMEFIBRAdWa4";
-const char* WIFI_PASS = "PasswordNiWifi!";
+const char* WIFI_SSID = "StarLink_2.4GHz_Py2X";
+const char* WIFI_PASS = "WifiNiJoessie!";
 
 // =========================
 // Adafruit IO credentials
@@ -49,6 +50,12 @@ const char* FEED_TEMP_RIZAL = "accerina/feeds/smartfarm-temp-rizal";
 WiFiClient wifiClient;
 Adafruit_MQTT_Client mqtt(&wifiClient, AIO_SERVER, AIO_SERVERPORT, IO_USERNAME, IO_KEY);
 
+Adafruit_MQTT_Publish feedLasPinas(&mqtt, FEED_TEMP_LAS_PINAS);
+Adafruit_MQTT_Publish feedTondoII(&mqtt, FEED_TEMP_TONDO_II);
+Adafruit_MQTT_Publish feedTondoI(&mqtt, FEED_TEMP_TONDO_I);
+Adafruit_MQTT_Publish feedMakati(&mqtt, FEED_TEMP_MAKATI);
+Adafruit_MQTT_Publish feedRizal(&mqtt, FEED_TEMP_RIZAL);
+
 struct LocationProfile {
   const char* owner;
   const char* location;
@@ -60,12 +67,6 @@ struct LocationProfile {
   Adafruit_MQTT_Publish* feed;
 };
 
-Adafruit_MQTT_Publish feedLasPinas(&mqtt, FEED_TEMP_LAS_PINAS);
-Adafruit_MQTT_Publish feedTondoII(&mqtt, FEED_TEMP_TONDO_II);
-Adafruit_MQTT_Publish feedTondoI(&mqtt, FEED_TEMP_TONDO_I);
-Adafruit_MQTT_Publish feedMakati(&mqtt, FEED_TEMP_MAKATI);
-Adafruit_MQTT_Publish feedRizal(&mqtt, FEED_TEMP_RIZAL);
-
 LocationProfile locations[] = {
   {"axl", "Las Pinas", 30.8f, 29.8f, 33.9f, 30.8f, 0.06f, &feedLasPinas},
   {"aljun", "Tondo II", 33.4f, 31.7f, 36.4f, 33.4f, 0.14f, &feedTondoII},
@@ -75,20 +76,10 @@ LocationProfile locations[] = {
 };
 
 const size_t LOCATION_COUNT = sizeof(locations) / sizeof(locations[0]);
-const size_t TONDO_II_INDEX = 1;
-const size_t TONDO_I_INDEX = 2;
-
-unsigned long lastPublishAt = 0;
+unsigned long nextPublishAt[LOCATION_COUNT];
 
 void clearStatusLeds() {
   digitalWrite(LED_YELLOW, LOW);
-}
-
-void ledSelfTest() {
-  digitalWrite(LED_YELLOW, HIGH);
-  delay(150);
-  digitalWrite(LED_YELLOW, LOW);
-  Serial.println("[CHECK] LED self-test OK");
 }
 
 bool connectWiFi() {
@@ -99,27 +90,26 @@ bool connectWiFi() {
   Serial.print("[WIFI] Connecting to: ");
   Serial.println(WIFI_SSID);
 
-  unsigned long startAttempt = millis();
-  while (WiFi.status() != WL_CONNECTED && (millis() - startAttempt) < WIFI_CONNECT_TIMEOUT_MS) {
+  unsigned long startedAt = millis();
+  while (WiFi.status() != WL_CONNECTED) {
     WiFi.begin(WIFI_SSID, WIFI_PASS);
 
-    unsigned long waitStart = millis();
-    while (WiFi.status() != WL_CONNECTED && (millis() - waitStart) < 3000UL) {
+    unsigned long tryStart = millis();
+    while (WiFi.status() != WL_CONNECTED && (millis() - tryStart) < 3000UL) {
       delay(200);
       Serial.print('.');
     }
     Serial.println();
+
+    if (millis() - startedAt > WIFI_CONNECT_TIMEOUT_MS) {
+      Serial.println("[WIFI] Timeout");
+      return false;
+    }
   }
 
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("[WIFI] Connected");
-    Serial.print("[WIFI] IP: ");
-    Serial.println(WiFi.localIP());
-    return true;
-  }
-
-  Serial.println("[WIFI] Connection failed");
-  return false;
+  Serial.print("[WIFI] Connected. IP: ");
+  Serial.println(WiFi.localIP());
+  return true;
 }
 
 bool connectMQTT() {
@@ -135,7 +125,6 @@ bool connectMQTT() {
   while ((ret = mqtt.connect()) != 0) {
     Serial.print("[MQTT] Failed: ");
     Serial.println(mqtt.connectErrorString(ret));
-
     mqtt.disconnect();
 
     if (--retries == 0) {
@@ -160,17 +149,6 @@ float clampf(float value, float minValue, float maxValue) {
   return value;
 }
 
-bool validateTemperature(float temperature) {
-  bool tempOk = (temperature >= -10.0f && temperature <= 60.0f);
-
-  if (!tempOk) {
-    Serial.print("[TEMP] Invalid temperature: ");
-    Serial.println(temperature);
-  }
-
-  return tempOk;
-}
-
 void generateLocationTemperature(LocationProfile &profile) {
   float randomJitter = ((float)random(-15, 16)) * 0.03f;
   float driftJitter = ((float)random(-2, 3)) * 0.01f;
@@ -190,84 +168,35 @@ void generateLocationTemperature(LocationProfile &profile) {
   profile.tempC = clampf(profile.tempC, profile.minC, profile.maxC);
 }
 
-bool runStartupChecks() {
-  Serial.println("=========================================");
-  Serial.println("[CHECK] Running startup validation");
-
-  ledSelfTest();
-
-  bool temperaturesOk = true;
-  for (size_t i = 0; i < LOCATION_COUNT; i++) {
-    generateLocationTemperature(locations[i]);
-    bool tempOk = validateTemperature(locations[i].tempC);
-    temperaturesOk = temperaturesOk && tempOk;
-
-    Serial.print("[CHECK] ");
-    Serial.print(locations[i].location);
-    Serial.print(" temp: ");
-    Serial.println(locations[i].tempC, 2);
-  }
-
-  bool wifiOk = connectWiFi();
-  bool mqttOk = wifiOk && connectMQTT();
-
-  bool allOk = temperaturesOk && wifiOk && mqttOk;
-
-  if (allOk) {
-    Serial.println("[CHECK] All startup checks PASSED");
-  } else {
-    Serial.println("[CHECK] Startup checks FAILED");
-  }
-
-  Serial.println("=========================================");
-  return allOk;
-}
-
-bool publishAllLocationTemperatures() {
-  if (!connectWiFi()) {
+bool publishOneLocation(size_t index) {
+  if (index >= LOCATION_COUNT) {
     return false;
   }
 
-  if (!connectMQTT()) {
+  if (!connectWiFi() || !connectMQTT()) {
     return false;
   }
 
-  bool allPublished = true;
+  generateLocationTemperature(locations[index]);
 
-  for (size_t i = 0; i < LOCATION_COUNT; i++) {
-    generateLocationTemperature(locations[i]);
+  char temperatureText[16];
+  dtostrf(locations[index].tempC, 0, 2, temperatureText);
+  bool ok = locations[index].feed->publish(temperatureText);
 
-    if (!validateTemperature(locations[i].tempC)) {
-      allPublished = false;
-      continue;
-    }
+  Serial.print("[PUB] ");
+  Serial.print(index + 1);
+  Serial.print(" | ");
+  Serial.print(locations[index].location);
+  Serial.print(" | Temp C: ");
+  Serial.print(temperatureText);
+  Serial.print(" | Feed: ");
+  Serial.println(ok ? "OK" : "FAIL");
 
-    char temperatureText[16];
-    dtostrf(locations[i].tempC, 0, 2, temperatureText);
-    bool tempOk = locations[i].feed->publish(temperatureText);
-    allPublished = allPublished && tempOk;
+  digitalWrite(LED_YELLOW, ok ? HIGH : LOW);
+  delay(50);
+  digitalWrite(LED_YELLOW, LOW);
 
-    Serial.print("[PUB] ");
-    Serial.print(locations[i].owner);
-    Serial.print(" | ");
-    Serial.print(locations[i].location);
-    Serial.print(" | Temp C: ");
-    Serial.print(temperatureText);
-    Serial.print(" | Feed: ");
-    Serial.println(tempOk ? "OK" : "FAIL");
-  }
-
-  bool tondoIIAlert = locations[TONDO_II_INDEX].tempC >= TEMP_ALERT_THRESHOLD_C;
-  digitalWrite(LED_YELLOW, tondoIIAlert ? HIGH : LOW);
-
-  Serial.print("[LED] Tondo II >= 30C: ");
-  Serial.println(tondoIIAlert ? "ON" : "OFF");
-
-  if (!allPublished) {
-    Serial.println("[PUB] One or more publish operations failed");
-  }
-
-  return allPublished;
+  return ok;
 }
 
 void setup() {
@@ -277,16 +206,15 @@ void setup() {
   }
 
   pinMode(LED_YELLOW, OUTPUT);
-
   clearStatusLeds();
 
   randomSeed((unsigned long)(micros() ^ analogRead(A0) ^ analogRead(A1)));
 
   Serial.println("=========================================");
-  Serial.println("  Smart Farm Multi-Location Simulator");
-  Serial.print("  Sensor ID: ");
+  Serial.println(" Smart Farm - 5 Node Staggered Publisher");
+  Serial.print(" Sensor ID: ");
   Serial.println(SENSOR_ID);
-  Serial.print("  Location : ");
+  Serial.print(" Location : ");
   Serial.println(LOCATION_NAME);
   Serial.println("=========================================");
 
@@ -296,12 +224,13 @@ void setup() {
   Serial.println("[FEEDS] smartfarm-temp-makati");
   Serial.println("[FEEDS] smartfarm-temp-rizal");
 
-  runStartupChecks();
+  connectWiFi();
+  connectMQTT();
 
-  // Publish once at boot so every location feed receives immediate data.
-  bool bootPublishOk = publishAllLocationTemperatures();
-  Serial.println(bootPublishOk ? "[BOOT] Immediate publish OK" : "[BOOT] Immediate publish FAILED");
-  lastPublishAt = millis();
+  unsigned long now = millis();
+  for (size_t i = 0; i < LOCATION_COUNT; i++) {
+    nextPublishAt[i] = now + (i * STAGGER_MS);
+  }
 }
 
 void loop() {
@@ -310,17 +239,10 @@ void loop() {
   mqtt.processPackets(1000);
 
   unsigned long now = millis();
-  if (now - lastPublishAt < READ_INTERVAL_MS) {
-    return;
+  for (size_t i = 0; i < LOCATION_COUNT; i++) {
+    if (now >= nextPublishAt[i]) {
+      publishOneLocation(i);
+      nextPublishAt[i] = now + NODE_INTERVAL_MS;
+    }
   }
-  lastPublishAt = now;
-
-  Serial.println("-----------------------------------------");
-
-  bool publishOk = publishAllLocationTemperatures();
-  if (!publishOk) {
-    Serial.println("[LOOP] Publish failed");
-  }
-
-  Serial.println("-----------------------------------------");
 }

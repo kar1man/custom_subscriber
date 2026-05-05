@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>SmartFarm - 5-Node Subscriber Dashboard</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main>
+    <h1>SmartFarm — 5-Node Live Dashboard</h1>
+    <p class="subtitle">Connected to Adafruit IO • Real-time Sensor Data</p>
+
+    <section class="controls">
+      <label>Adafruit IO Username
+        <input id="username" value="accerina" />
+      </label>
+      <label>Adafruit IO Key
+        <div class="password-wrap">
+          <input id="password" type="password" value="YOUR_ADAFRUIT_IO_KEY_HERE" />
+          <button id="toggle-password" type="button" class="toggle-password" aria-pressed="false" aria-label="Show API key">Show</button>
+        </div>
+      </label>
+      <div class="row">
+        <button id="connect">Connect All 5 Nodes</button>
+        <button id="disconnect" disabled>Disconnect</button>
+      </div>
+      <div id="status" class="status">Disconnected</div>
+    </section>
+
+    <section class="nodes-grid">
+      <div class="node-card" id="node-001">
+        <h3>Las Piñas</h3>
+        <div class="sensor-value">—</div>
+        <div class="sensor-label">Temperature</div>
+        <div class="feed-name">smartfarm-temp-las-pinas</div>
+        <div class="last-update">Never</div>
+      </div>
+
+      <div class="node-card" id="node-002">
+        <h3>Tondo II</h3>
+        <div class="sensor-value">—</div>
+        <div class="sensor-label">Temperature</div>
+        <div class="feed-name">smartfarm-temp-tondo-ii</div>
+        <div class="last-update">Never</div>
+      </div>
+
+      <div class="node-card" id="node-003">
+        <h3>Tondo I</h3>
+        <div class="sensor-value">—</div>
+        <div class="sensor-label">Temperature</div>
+        <div class="feed-name">smartfarm-temp-tondo-i</div>
+        <div class="last-update">Never</div>
+      </div>
+
+      <div class="node-card" id="node-004">
+        <h3>Makati</h3>
+        <div class="sensor-value">—</div>
+        <div class="sensor-label">Temperature</div>
+        <div class="feed-name">smartfarm-temp-makati</div>
+        <div class="last-update">Never</div>
+      </div>
+
+      <div class="node-card" id="node-005">
+        <h3>Rizal</h3>
+        <div class="sensor-value">—</div>
+        <div class="sensor-label">Temperature</div>
+        <div class="feed-name">smartfarm-temp-rizal</div>
+        <div class="last-update">Never</div>
+      </div>
+    </section>
+
+    <section class="help">
+      <p><strong>Custom Subscriber Dashboard:</strong> Displays real-time data from 5 Arduino nodes located at different sites. Each node publishes temperature to Adafruit IO; this dashboard subscribes to all 5 feeds simultaneously. Data updates appear in real-time as nodes send readings (staggered timing simulates independent Arduino devices).</p>
+    </section>
+  </main>
+
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

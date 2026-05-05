@@ -16,14 +16,14 @@
 // Adjust after testing your room/farm lighting.
 #define LIGHT_THRESHOLD 260
 
-// LED actuator thresholds for simulated sensor values.
-#define TEMP_THRESHOLD_C 28.0
+// Threshold used by the Adafruit IO action trigger.
+#define TEMP_THRESHOLD_C 30.0
 #define HUMIDITY_THRESHOLD_PCT 65.0
 
 // =========================
 // Timing
 // =========================
-#define READ_INTERVAL_MS 10000
+#define READ_INTERVAL_MS 5000
 #define MQTT_RETRY_MS 5000
 
 // =========================
@@ -44,7 +44,7 @@ const char* IO_KEY = "PASTE_YOUR_ADAFRUIT_ACTIVE_KEY_HERE";
 // Node identity
 // =========================
 const char* SENSOR_ID = "001";
-const char* LOCATION_NAME = "North_Field";
+const char* LOCATION_NAME = "Tondo";
 
 // =========================
 // Adafruit IO MQTT endpoint
@@ -71,13 +71,14 @@ unsigned long lastPublishAt = 0;
 // Simulation parameters
 // ========================
 unsigned long simulationStartTime = 0;
-const float tempSwing = 2.0;         // Threshold ±2C to force ON/OFF checks.
-const float humiditySwing = 6.0;     // Threshold ±6% to force ON/OFF checks.
-const float simulationPeriodMs = 40000.0;  // Full up/down cycle every 40 seconds.
+const float tempLow = 27.4f;
+const float tempHigh = 31.6f;
+const float humidityLow = 55.0f;
+const float humidityHigh = 61.0f;
+const unsigned long halfCycleMs = 15000UL;
+const unsigned long fullCycleMs = halfCycleMs * 2UL;
 
 void clearIndicatorLeds() {
-  digitalWrite(LED_YELLOW, LOW);
-  digitalWrite(LED_BLUE, LOW);
 }
 
 void connectWiFi() {
@@ -146,14 +147,22 @@ const char* getStatusLabel(bool isDaytime) {
 void getSimulatedSensorData(float &temperature, float &humidity, int &lightLevel) {
   unsigned long elapsed = millis() - simulationStartTime;
 
-  // Force simulated values to cross actuator thresholds repeatedly for easier validation.
-  float phase = ((elapsed % (unsigned long)simulationPeriodMs) * 2.0 * PI) / simulationPeriodMs;
+  // 30-second loop: climb for 15 seconds, then cool for 15 seconds.
+  // The value is sampled frequently enough to catch the 30 C threshold.
+  unsigned long cycleMs = elapsed % fullCycleMs;
+  float phaseProgress = (float)(cycleMs % halfCycleMs) / (float)halfCycleMs;
 
-  temperature = TEMP_THRESHOLD_C + (tempSwing * sin(phase));
-  temperature += random(-15, 15) / 100.0;  // Small jitter for realistic readings.
+  if (cycleMs < halfCycleMs) {
+    temperature = tempLow + ((tempHigh - tempLow) * phaseProgress);
+    humidity = humidityLow + ((humidityHigh - humidityLow) * phaseProgress);
+  } else {
+    temperature = tempHigh - ((tempHigh - tempLow) * phaseProgress);
+    humidity = humidityHigh - ((humidityHigh - humidityLow) * phaseProgress);
+  }
 
-  humidity = HUMIDITY_THRESHOLD_PCT + (humiditySwing * sin(phase + PI));
-  humidity += random(-20, 20) / 100.0;
+  int jitterStep = (int)((elapsed / 1000UL) % 3UL) - 1;
+  temperature += (float)jitterStep * 0.10f;
+  humidity += (float)jitterStep * 0.20f;
 
   if (humidity < 0.0) {
     humidity = 0.0;
@@ -163,24 +172,11 @@ void getSimulatedSensorData(float &temperature, float &humidity, int &lightLevel
   }
 
   // Keep status feed cycling by tying light level to simulation phase.
-  bool isDaySimulation = sin(phase) > 0;
+  bool isDaySimulation = cycleMs < halfCycleMs;
   lightLevel = isDaySimulation ? (900 + random(0, 100)) : (50 + random(0, 50));
 }
 
 void applyTemperatureHumidityLeds(float temperature, float humidity) {
-  clearIndicatorLeds();
-
-  if (temperature >= TEMP_THRESHOLD_C) {
-    digitalWrite(LED_YELLOW, HIGH);
-  } else {
-    digitalWrite(LED_YELLOW, LOW);
-  }
-
-  if (humidity >= HUMIDITY_THRESHOLD_PCT) {
-    digitalWrite(LED_BLUE, HIGH);
-  } else {
-    digitalWrite(LED_BLUE, LOW);
-  }
 }
 
 bool publishSensorData(float temperature, float humidity, int lightLevel, bool isDaytime) {
