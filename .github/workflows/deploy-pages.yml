@@ -1,0 +1,22 @@
+name: Deploy Smart Farm Dashboard to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Deploy dashboard folder to GitHub Pages
+        uses: JamesIves/github-pages-deploy-action@v5
+        with:
+          branch: gh-pages
+          folder: Projects/Smart_Farm/custom_subscriber
+          clean: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: 'Deploy Smart Farm dashboard to GitHub Pages'
