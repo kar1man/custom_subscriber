@@ -26,7 +26,7 @@ const char* WIFI_PASS = "PasswordNiWifi!";
 // Adafruit IO credentials
 // =========================
 const char* IO_USERNAME = "accerina";
-const char* IO_KEY = "YOUR_ADAFRUIT_IO_KEY_HERE";
+const char* IO_KEY = "YOUR_ADAFRUIT_IO_KEY_HERE"; // Replace with your actual key
 
 // =========================
 // Node identity
